@@ -1,0 +1,1595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Breathe Easy — Local Pollen & Air Quality Map</title>
+  <meta name="description" content="Hyper-local pollen and air quality map. See nearby trees, grasses, and weeds that affect your allergies. No tracking, all data stays in your browser." />
+
+  <meta name="theme-color" content="#2f855a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Breathe Easy" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+  <style>
+    /* ── Reset & Variables ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f7f8fa;
+      --surface: #ffffff;
+      --surface2: #f0f2f5;
+      --border: #e2e6ea;
+      --text: #1a202c;
+      --text-muted: #718096;
+      --green: #2f855a;
+      --green-light: #c6f6d5;
+      --yellow: #d69e2e;
+      --yellow-light: #fefcbf;
+      --orange: #c05621;
+      --orange-light: #feebc8;
+      --red: #c53030;
+      --red-light: #fed7d7;
+      --blue: #2b6cb0;
+      --blue-light: #bee3f8;
+      --purple: #553c9a;
+      --panel-w: 340px;
+      --radius: 12px;
+      --shadow: 0 4px 24px rgba(0,0,0,0.10);
+      --shadow-sm: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+
+    /* ── Layout ── */
+    #app { position: relative; width: 100%; height: 100vh; overflow: hidden; }
+    #map { position: absolute; inset: 0; z-index: 1; }
+
+    /* ── Top Bar ── */
+    #topbar {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      z-index: 10; background: var(--surface); border-radius: 40px;
+      box-shadow: var(--shadow); padding: 10px 20px;
+      display: flex; align-items: center; gap: 14px;
+      max-width: calc(100vw - 32px);
+    }
+    #logo { font-size: 18px; font-weight: 700; color: var(--green); white-space: nowrap; letter-spacing: -0.3px; }
+    #logo span { color: var(--text-muted); font-weight: 400; font-size: 13px; margin-left: 4px; }
+    #location-name { font-size: 13px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+
+    /* ── Floating Buttons ── */
+    .fab {
+      position: absolute; z-index: 10; border: none; cursor: pointer;
+      border-radius: 50%; width: 48px; height: 48px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: var(--shadow); transition: transform .15s, box-shadow .15s;
+      font-size: 20px;
+    }
+    .fab:hover { transform: scale(1.07); box-shadow: var(--shadow); }
+    .fab:active { transform: scale(0.96); }
+
+    #locate-btn { bottom: 24px; right: 16px; background: var(--surface); color: var(--green); }
+    #panel-toggle { bottom: 80px; right: 16px; background: var(--green); color: #fff; font-size: 16px; }
+
+    /* ── Side Panel ── */
+    #panel {
+      position: absolute; top: 0; left: 0; bottom: 0; width: var(--panel-w);
+      z-index: 9; background: var(--surface); box-shadow: var(--shadow);
+      overflow-y: auto; overflow-x: hidden;
+      transition: transform .3s cubic-bezier(.4,0,.2,1);
+      scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+    }
+    #panel.collapsed { transform: translateX(calc(-1 * var(--panel-w))); }
+    #panel::-webkit-scrollbar { width: 4px; }
+    #panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .panel-section { padding: 16px; border-bottom: 1px solid var(--border); }
+    .panel-section:last-child { border-bottom: none; }
+    .section-title { font-size: 11px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; }
+
+    /* ── Pollen Cards ── */
+    .pollen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .pollen-card {
+      border-radius: 10px; padding: 10px 12px; position: relative; overflow: hidden;
+      cursor: default;
+    }
+    .pollen-card .p-label { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; }
+    .pollen-card .p-value { font-size: 22px; font-weight: 800; line-height: 1; }
+    .pollen-card .p-unit { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+    .pollen-card .p-level { font-size: 11px; font-weight: 700; margin-top: 6px; border-radius: 6px; padding: 2px 7px; display: inline-block; }
+    .risk-none   { background: var(--surface2); }
+    .risk-low    { background: var(--green-light); }
+    .risk-medium { background: var(--yellow-light); }
+    .risk-high   { background: var(--orange-light); }
+    .risk-vhigh  { background: var(--red-light); }
+    .risk-none   .p-level { background: #e2e8f0; color: #4a5568; }
+    .risk-low    .p-level { background: #9ae6b4; color: #22543d; }
+    .risk-medium .p-level { background: #f6e05e; color: #744210; }
+    .risk-high   .p-level { background: #f6ad55; color: #7b341e; }
+    .risk-vhigh  .p-level { background: #fc8181; color: #742a2a; }
+
+    /* ── AQ Bar ── */
+    .aq-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .aq-label { font-size: 12px; color: var(--text-muted); width: 100px; flex-shrink: 0; }
+    .aq-bar-track { flex: 1; height: 8px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+    .aq-bar-fill { height: 100%; border-radius: 4px; transition: width .4s; }
+    .aq-val { font-size: 12px; font-weight: 700; width: 44px; text-align: right; }
+
+    /* ── Forecast Strip ── */
+    .forecast-strip { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+    .forecast-strip::-webkit-scrollbar { display: none; }
+    .fc-day {
+      flex-shrink: 0; background: var(--surface2); border-radius: 10px;
+      padding: 8px 10px; text-align: center; min-width: 60px;
+    }
+    .fc-day .fc-date { font-size: 11px; font-weight: 600; color: var(--text-muted); }
+    .fc-day .fc-bar { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; }
+    .fc-day .fc-pip { height: 5px; border-radius: 3px; width: 100%; }
+    .fc-day.fc-today { background: var(--green-light); }
+    .fc-day .fc-label { font-size: 9px; color: var(--text-muted); margin-top: 4px; }
+
+    /* ── Filter Toggles ── */
+    .filter-grid { display: flex; flex-direction: column; gap: 8px; }
+    .filter-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; border-radius: 10px; background: var(--surface2);
+      cursor: pointer; transition: background .15s; user-select: none;
+    }
+    .filter-row:hover { background: var(--border); }
+    .filter-row.active { background: var(--green-light); }
+    .filter-icon { font-size: 18px; width: 24px; text-align: center; }
+    .filter-info { flex: 1; }
+    .filter-name { font-size: 13px; font-weight: 600; }
+    .filter-desc { font-size: 11px; color: var(--text-muted); margin-top: 1px; }
+    .filter-toggle {
+      width: 36px; height: 20px; border-radius: 10px; background: var(--border);
+      position: relative; transition: background .2s; flex-shrink: 0;
+    }
+    .filter-toggle::after {
+      content: ''; position: absolute; top: 3px; left: 3px;
+      width: 14px; height: 14px; border-radius: 50%; background: #fff;
+      transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2);
+    }
+    .filter-row.active .filter-toggle { background: var(--green); }
+    .filter-row.active .filter-toggle::after { transform: translateX(16px); }
+
+    /* ── Legend ── */
+    .legend-items { display: flex; flex-direction: column; gap: 6px; }
+    .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── Radius Control ── */
+    #radius-wrap { display: flex; align-items: center; gap: 8px; }
+    #radius-wrap label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    #radius-slider { width: 80px; accent-color: var(--green); }
+    #radius-val { font-size: 12px; font-weight: 700; color: var(--green); white-space: nowrap; }
+
+    /* ── Loading Overlay ── */
+    #loading {
+      position: absolute; inset: 0; z-index: 100;
+      background: rgba(247,248,250,0.88); backdrop-filter: blur(4px);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; transition: opacity .3s;
+    }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner {
+      width: 40px; height: 40px; border: 3px solid var(--border);
+      border-top-color: var(--green); border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading p { font-size: 14px; color: var(--text-muted); font-weight: 500; }
+
+    /* ── Popup Styling ── */
+    .leaflet-popup-content-wrapper { border-radius: 12px !important; box-shadow: var(--shadow) !important; border: none !important; }
+    .leaflet-popup-content { margin: 14px 16px !important; }
+    .popup-title { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+    .popup-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 3px; }
+    .popup-row .key { color: var(--text-muted); }
+    .popup-badge {
+      font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+    }
+    .popup-season { font-size: 11px; color: var(--text-muted); margin-top: 8px; border-top: 1px solid var(--border); padding-top: 8px; }
+    .season-months { display: flex; gap: 2px; margin-top: 4px; flex-wrap: wrap; }
+    .month-pip {
+      width: 20px; height: 8px; border-radius: 3px; font-size: 8px;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    /* ── No Location Message ── */
+    #no-location {
+      position: absolute; top: 80px; left: 50%; transform: translateX(-50%);
+      z-index: 10; background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 20px 24px; text-align: center;
+      max-width: 320px; width: calc(100vw - 32px);
+    }
+    #no-location h3 { font-size: 16px; margin-bottom: 8px; }
+    #no-location p { font-size: 13px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5; }
+    .btn-primary {
+      background: var(--green); color: #fff; border: none; border-radius: 8px;
+      padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer;
+      width: 100%; transition: opacity .15s;
+    }
+    .btn-primary:hover { opacity: 0.9; }
+
+    /* ── Divider ── */
+    .or-divider {
+      display: flex; align-items: center; gap: 10px;
+      margin: 14px 0; color: var(--text-muted); font-size: 12px;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ''; flex: 1; height: 1px; background: var(--border);
+    }
+
+    /* ── ZIP Input ── */
+    .zip-row { display: flex; gap: 6px; }
+    .zip-input {
+      flex: 1; border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px 12px; font-size: 14px; outline: none;
+      transition: border-color .15s; background: var(--surface);
+      color: var(--text); min-width: 0;
+    }
+    .zip-input:focus { border-color: var(--green); }
+    .zip-input::placeholder { color: var(--text-muted); }
+    .zip-go {
+      background: var(--surface2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 9px 14px; font-size: 14px; font-weight: 600;
+      cursor: pointer; white-space: nowrap; transition: background .15s;
+    }
+    .zip-go:hover { background: var(--border); }
+
+    /* ── Panel ZIP search ── */
+    #panel-zip-wrap { margin-top: 12px; }
+    #panel-zip-wrap .zip-input { font-size: 13px; padding: 8px 10px; }
+    #panel-zip-wrap .zip-go { font-size: 13px; padding: 8px 12px; }
+
+    /* ── Error Toast ── */
+    #toast {
+      position: absolute; bottom: 100px; left: 50%; transform: translateX(-50%);
+      z-index: 20; background: #1a202c; color: #fff; border-radius: 8px;
+      padding: 10px 18px; font-size: 13px; max-width: 300px; text-align: center;
+      opacity: 0; transition: opacity .3s; pointer-events: none;
+    }
+    #toast.show { opacity: 1; }
+
+    /* ── Panel Header ── */
+    #panel-header {
+      padding: 20px 16px 12px; border-bottom: 1px solid var(--border);
+      background: linear-gradient(135deg, #e8f5ee 0%, #f0fff4 100%);
+    }
+    #panel-header h1 { font-size: 22px; font-weight: 800; color: var(--green); letter-spacing: -0.5px; }
+    #panel-header p { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    #fetch-btn {
+      margin-top: 12px; background: var(--green); color: #fff; border: none;
+      border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600;
+      cursor: pointer; width: 100%; transition: opacity .15s;
+    }
+    #fetch-btn:hover { opacity: 0.88; }
+    #fetch-btn:disabled { opacity: 0.5; cursor: default; }
+
+    /* ── Responsive ── */
+    @media (max-width: 600px) {
+      :root { --panel-w: min(320px, 90vw); }
+      #topbar { padding: 8px 14px; gap: 10px; }
+      #logo { font-size: 16px; }
+      #radius-wrap { display: none; }
+      #locate-btn { bottom: 100px; right: 12px; }
+      #panel-toggle { bottom: 44px; right: 12px; }
+    }
+
+    /* ── Marker Styles (DivIcon) ── */
+    .tree-dot {
+      border-radius: 50%; border: 2px solid #fff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; line-height: 1;
+    }
+    .marker-cluster-small, .marker-cluster-medium, .marker-cluster-large {
+      background-clip: padding-box;
+    }
+    .marker-cluster div { font-weight: 700; }
+
+    /* Grass polygon tooltip */
+    .grass-tooltip { background: var(--surface); border: 1px solid var(--border) !important; border-radius: 8px; font-size: 12px; }
+
+    /* ── No data placeholder ── */
+    .no-data { font-size: 13px; color: var(--text-muted); text-align: center; padding: 12px 0; }
+
+    /* ── Allergen Profile Chips ── */
+    .allergen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .allergen-chip {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 10px; border-radius: 8px; background: var(--surface2);
+      border: 2px solid transparent; cursor: pointer; font-size: 12px;
+      font-weight: 600; transition: background .15s, border-color .15s;
+      user-select: none;
+    }
+    .allergen-chip:hover { background: var(--border); }
+    .allergen-chip.active {
+      background: var(--green-light); border-color: var(--green);
+      color: var(--green);
+    }
+    .allergen-chip .chip-icon { font-size: 15px; }
+
+    /* ── Hourly Chart ── */
+    #hourly-chart-wrap { margin-top: 4px; }
+    .hourly-bars {
+      display: flex; align-items: flex-end; gap: 2px;
+      height: 60px; padding: 0 2px;
+    }
+    .h-bar-col { display: flex; flex-direction: column; align-items: center; flex: 1; }
+    .h-bar {
+      width: 100%; border-radius: 3px 3px 0 0; min-height: 3px;
+      transition: opacity .2s;
+    }
+    .h-bar.current-hour { outline: 2px solid #2b6cb0; outline-offset: 1px; }
+    .h-bar.future-dim { opacity: 0.55; }
+    .h-bar-label { font-size: 7px; color: var(--text-muted); margin-top: 2px; }
+    .hourly-best {
+      margin-top: 10px; padding: 8px 10px; border-radius: 8px;
+      background: var(--green-light); font-size: 12px; font-weight: 600;
+      color: #22543d; line-height: 1.4;
+    }
+    .hourly-best.elevated { background: var(--orange-light); color: #7b341e; }
+
+    /* ── Rain Card ── */
+    #section-rain { display: none; }
+    #rain-display {
+      padding: 8px 10px; border-radius: 8px;
+      background: var(--blue-light); font-size: 13px;
+      font-weight: 600; color: var(--blue); line-height: 1.4;
+    }
+
+    /* ── Pollen card profile ring ── */
+    .pollen-card.profile-active { box-shadow: 0 0 0 3px var(--green); }
+    .pollen-card.profile-inactive { opacity: 0.6; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+
+  <!-- Top Bar -->
+  <div id="topbar">
+    <div id="logo">🌿 breathe easy <span>pollen &amp; air map</span></div>
+    <div id="radius-wrap">
+      <label for="radius-slider">Radius</label>
+      <input type="range" id="radius-slider" min="500" max="5000" step="250" value="1500" />
+      <span id="radius-val">1.5 km</span>
+    </div>
+    <span id="location-name">–</span>
+  </div>
+
+  <!-- Side Panel -->
+  <div id="panel">
+    <div id="panel-header">
+      <h1>🌿 Breathe Easy</h1>
+      <p>Hyper-local pollen &amp; air quality · no tracking · data stays in your browser</p>
+      <button id="fetch-btn" disabled>📍 Enable Location to Load Data</button>
+      <div id="panel-zip-wrap">
+        <div class="zip-row" style="margin-top:8px">
+          <input class="zip-input" id="zip-input-panel" type="text"
+                 placeholder="ZIP, address, or city…"
+                 onkeydown="if(event.key==='Enter')geocodeLocation(this.value)" />
+          <button class="zip-go" onclick="geocodeLocation(document.getElementById('zip-input-panel').value)">Go</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- My Allergens -->
+    <div class="panel-section" id="section-allergens">
+      <div class="section-title">My Allergens</div>
+      <div class="allergen-grid" id="allergen-grid">
+        <div class="allergen-chip" data-key="birch_pollen" onclick="toggleAllergen('birch_pollen', this)">
+          <span class="chip-icon">🌳</span>Birch
+        </div>
+        <div class="allergen-chip" data-key="alder_pollen" onclick="toggleAllergen('alder_pollen', this)">
+          <span class="chip-icon">🌲</span>Alder
+        </div>
+        <div class="allergen-chip" data-key="olive_pollen" onclick="toggleAllergen('olive_pollen', this)">
+          <span class="chip-icon">🫒</span>Olive
+        </div>
+        <div class="allergen-chip" data-key="grass_pollen" onclick="toggleAllergen('grass_pollen', this)">
+          <span class="chip-icon">🌾</span>Grass
+        </div>
+        <div class="allergen-chip" data-key="ragweed_pollen" onclick="toggleAllergen('ragweed_pollen', this)">
+          <span class="chip-icon">🌿</span>Ragweed
+        </div>
+        <div class="allergen-chip" data-key="mugwort_pollen" onclick="toggleAllergen('mugwort_pollen', this)">
+          <span class="chip-icon">🍃</span>Mugwort
+        </div>
+      </div>
+    </div>
+
+    <!-- Current Pollen -->
+    <div class="panel-section" id="section-pollen">
+      <div class="section-title">Today's Pollen Forecast</div>
+      <div class="pollen-grid" id="pollen-grid">
+        <div class="no-data" style="grid-column:1/-1">Enable location to see local pollen data</div>
+      </div>
+    </div>
+
+    <!-- Best Time Today -->
+    <div class="panel-section" id="section-hourly">
+      <div class="section-title">Best Time Today</div>
+      <div id="hourly-chart-wrap">
+        <div class="no-data">Enable location to see hourly forecast</div>
+      </div>
+    </div>
+
+    <!-- Forecast -->
+    <div class="panel-section" id="section-forecast">
+      <div class="section-title">5-Day Forecast</div>
+      <div class="forecast-strip" id="forecast-strip">
+        <div class="no-data" style="width:100%">–</div>
+      </div>
+    </div>
+
+    <!-- Rain -->
+    <div class="panel-section" id="section-rain">
+      <div class="section-title">Rain Conditions</div>
+      <div id="rain-display"></div>
+    </div>
+
+    <!-- Air Quality -->
+    <div class="panel-section" id="section-aq">
+      <div class="section-title">Air Quality</div>
+      <div id="aq-rows">
+        <div class="no-data">Enable location to see air quality</div>
+      </div>
+    </div>
+
+    <!-- Wind -->
+    <div class="panel-section" id="section-wind" style="display:none">
+      <div class="section-title">Wind Conditions</div>
+      <div id="wind-display"></div>
+    </div>
+
+    <!-- Allergen Filters -->
+    <div class="panel-section">
+      <div class="section-title">Show on Map</div>
+      <div class="filter-grid" id="filter-grid">
+        <div class="filter-row active" data-filter="tree" onclick="toggleFilter('tree', this)">
+          <span class="filter-icon">🌳</span>
+          <div class="filter-info">
+            <div class="filter-name">Trees</div>
+            <div class="filter-desc">Oak, birch, cedar, maple &amp; more</div>
+          </div>
+          <div class="filter-toggle"></div>
+        </div>
+        <div class="filter-row active" data-filter="grass" onclick="toggleFilter('grass', this)">
+          <span class="filter-icon">🌾</span>
+          <div class="filter-info">
+            <div class="filter-name">Grasses</div>
+            <div class="filter-desc">Parks, lawns, meadows</div>
+          </div>
+          <div class="filter-toggle"></div>
+        </div>
+        <div class="filter-row active" data-filter="weed" onclick="toggleFilter('weed', this)">
+          <span class="filter-icon">🌿</span>
+          <div class="filter-info">
+            <div class="filter-name">Weeds</div>
+            <div class="filter-desc">Ragweed, mugwort, plantain</div>
+          </div>
+          <div class="filter-toggle"></div>
+        </div>
+        <div class="filter-row active" data-filter="airquality" onclick="toggleFilter('airquality', this)">
+          <span class="filter-icon">🏭</span>
+          <div class="filter-info">
+            <div class="filter-name">Air Quality</div>
+            <div class="filter-desc">PM2.5, ozone, NO₂</div>
+          </div>
+          <div class="filter-toggle"></div>
+        </div>
+        <div class="filter-row" data-filter="wind" onclick="toggleFilter('wind', this)">
+          <span class="filter-icon">🌬️</span>
+          <div class="filter-info">
+            <div class="filter-name">Wind Direction</div>
+            <div class="filter-desc">Shows where pollen is drifting</div>
+          </div>
+          <div class="filter-toggle"></div>
+        </div>
+        <div class="filter-row active" data-filter="heatmap" onclick="toggleFilter('heatmap', this)">
+          <span class="filter-icon">🌡️</span>
+          <div class="filter-info">
+            <div class="filter-name">Pollen Heatmap</div>
+            <div class="filter-desc">Find low-pollen zones nearby</div>
+          </div>
+          <div class="filter-toggle"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="panel-section">
+      <div class="section-title">Pollen Risk Legend</div>
+      <div class="legend-items">
+        <div class="legend-item"><div class="legend-dot" style="background:#68d391"></div><span>Low — unlikely to cause symptoms</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f6e05e"></div><span>Moderate — mild symptoms possible</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#f6ad55"></div><span>High — likely to cause symptoms</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#fc8181"></div><span>Very High — severe symptoms likely</span></div>
+        <div class="legend-item"><div class="legend-dot" style="background:#9f7aea"></div><span>Tree (not in peak season)</span></div>
+        <div class="legend-item" style="margin-top:6px">
+          <div style="width:12px;height:12px;border-radius:2px;background:rgba(154,230,180,0.4);border:1px solid #68d391;flex-shrink:0"></div>
+          <span>Grass / meadow area</span>
+        </div>
+        <div class="legend-item" style="margin-top:6px">
+          <svg width="12" height="16" viewBox="0 0 10 20" style="flex-shrink:0"><path d="M5 0 L0 18 L5 13 L10 18 Z" fill="rgba(59,130,246,0.75)"/></svg>
+          <span>Wind arrow (points downwind)</span>
+        </div>
+        <div class="legend-item" style="margin-top:4px">
+          <div style="width:50px;height:8px;border-radius:4px;background:linear-gradient(to right,#68d391,#f6e05e,#f6ad55,#fc8181);flex-shrink:0"></div>
+          <span style="margin-left:6px">Heatmap — green=low, red=high</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- About -->
+    <div class="panel-section">
+      <div class="section-title">About</div>
+      <p style="font-size:12px;color:var(--text-muted);line-height:1.6">
+        Tree locations from <strong>OpenStreetMap</strong> via Overpass API.
+        Pollen forecasts &amp; air quality from <strong>Open-Meteo</strong> (free, no key required).
+      </p>
+      <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin-top:8px;padding:8px 10px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--green)">
+        🔒 <strong>Your data stays with you.</strong> All preferences are stored locally in your browser. Your location and search queries are sent directly to the data providers (OpenStreetMap, Open-Meteo, Nominatim) and are never routed through or stored on any Breathe Easy server. We do not track your requests.
+      </p>
+      <p style="font-size:11px;color:var(--text-muted);line-height:1.5;margin-top:8px;padding:8px 10px;background:#fefcbf;border-radius:8px;border-left:3px solid #d69e2e">
+        ⚠️ <strong>Not medical advice.</strong> Pollen data is modeled and may not reflect your exact conditions. Air quality readings may be delayed or inaccurate. Do not rely on this app for medical decisions. Consult a healthcare provider regarding allergy management.
+      </p>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:10px">© <script>document.write(new Date().getFullYear())</script> Twin Kites LLC</p>
+    </div>
+  </div>
+
+  <!-- No location prompt -->
+  <div id="no-location">
+    <h3>📍 Find your air</h3>
+    <p>Enter a ZIP code, address, or city — or allow location access.</p>
+    <div class="zip-row" style="margin-bottom:8px">
+      <input class="zip-input" id="zip-input-prompt" type="text"
+             placeholder="ZIP, address, or city…"
+             onkeydown="if(event.key==='Enter')geocodeLocation(this.value)" />
+      <button class="zip-go" onclick="geocodeLocation(document.getElementById('zip-input-prompt').value)">Go</button>
+    </div>
+    <div class="or-divider">or</div>
+    <button class="btn-primary" onclick="locateUser()">Try to Locate Me</button>
+  </div>
+
+  <!-- FABs -->
+  <button class="fab" id="panel-toggle" onclick="togglePanel()" title="Toggle panel">☰</button>
+  <button class="fab" id="locate-btn" onclick="locateUser()" title="Center on my location">📍</button>
+
+  <!-- Loading -->
+  <div id="loading" class="hidden">
+    <div class="spinner"></div>
+    <p id="loading-msg">Loading…</p>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<script>
+// ─────────────────────────────────────────────
+//  CONFIG & CONSTANTS
+// ─────────────────────────────────────────────
+const OVERPASS_MIRRORS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+const OPEN_METEO_AQ = 'https://air-quality-api.open-meteo.com/v1/air-quality';
+const GEOCODE_URL = 'https://nominatim.openstreetmap.org/reverse';
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const TODAY = new Date();
+const CUR_MONTH = TODAY.getMonth() + 1; // 1-12
+
+// ── Tree genus → pollen info ──────────────────────────────────────
+// months: 1-12 peak pollination months (Northern Hemisphere baseline)
+const GENUS_MAP = {
+  quercus:    { name:'Oak',            risk:'high',   color:'#c05621', months:[3,4,5] },
+  betula:     { name:'Birch',          risk:'high',   color:'#d69e2e', months:[3,4,5] },
+  alnus:      { name:'Alder',          risk:'medium', color:'#a0522d', months:[1,2,3] },
+  fraxinus:   { name:'Ash',            risk:'high',   color:'#718096', months:[3,4,5] },
+  ulmus:      { name:'Elm',            risk:'medium', color:'#6b8e23', months:[2,3,4] },
+  acer:       { name:'Maple',          risk:'medium', color:'#e05252', months:[3,4,5] },
+  juniperus:  { name:'Juniper/Cedar',  risk:'high',   color:'#2f6e2f', months:[1,2,3,12] },
+  cupressus:  { name:'Cypress',        risk:'high',   color:'#276749', months:[1,2,3] },
+  pinus:      { name:'Pine',           risk:'low',    color:'#276749', months:[4,5,6] },
+  platanus:   { name:'London Plane',   risk:'medium', color:'#805ad5', months:[4,5] },
+  populus:    { name:'Poplar',         risk:'medium', color:'#4a9e6b', months:[3,4] },
+  salix:      { name:'Willow',         risk:'low',    color:'#38a169', months:[3,4,5] },
+  olea:       { name:'Olive',          risk:'high',   color:'#6b7280', months:[5,6,7] },
+  morus:      { name:'Mulberry',       risk:'high',   color:'#6b21a8', months:[4,5] },
+  tilia:      { name:'Linden',         risk:'low',    color:'#b7791f', months:[6,7] },
+  castanea:   { name:'Chestnut',       risk:'low',    color:'#92400e', months:[6,7] },
+  corylus:    { name:'Hazel',          risk:'medium', color:'#a16207', months:[1,2,3] },
+  carpinus:   { name:'Hornbeam',       risk:'medium', color:'#8b5e3c', months:[4,5] },
+  fagus:      { name:'Beech',          risk:'medium', color:'#7c9250', months:[4,5] },
+  robinia:    { name:'Black Locust',   risk:'low',    color:'#5a7a3a', months:[5,6] },
+  liquidambar:{ name:'Sweetgum',       risk:'medium', color:'#c05621', months:[3,4] },
+  celtis:     { name:'Hackberry',      risk:'medium', color:'#9c6b4a', months:[3,4] },
+  parietaria: { name:'Pellitory',      risk:'high',   color:'#5f7a3a', months:[4,5,6,7,8,9] },
+};
+
+// Risk to display color
+const RISK_COLOR = {
+  none:   '#a0aec0',
+  low:    '#68d391',
+  medium: '#f6e05e',
+  high:   '#f6ad55',
+  vhigh:  '#fc8181',
+  offseason: '#9f7aea',
+};
+
+// Pollen grains/m³ → risk level thresholds
+function pollenRisk(val, type) {
+  if (val === null || val === undefined || isNaN(val)) return 'none';
+  // Different thresholds by type
+  const thresholds = type === 'grass'
+    ? [0, 10, 30, 80]
+    : type === 'weed'
+    ? [0, 10, 30, 60]
+    : [0, 10, 40, 100]; // trees
+  if (val <= thresholds[0]) return 'none';
+  if (val <= thresholds[1]) return 'low';
+  if (val <= thresholds[2]) return 'medium';
+  if (val <= thresholds[3]) return 'high';
+  return 'vhigh';
+}
+
+const RISK_LABEL = { none:'No data', low:'Low', medium:'Moderate', high:'High', vhigh:'Very High' };
+const RISK_CLASS = { none:'risk-none', low:'risk-low', medium:'risk-medium', high:'risk-high', vhigh:'risk-vhigh' };
+
+// AQ: µg/m³ max for color bar (arbitrary scale for display)
+const AQ_SCALE = { pm2_5: 75, pm10: 150, ozone: 180, nitrogen_dioxide: 200 };
+const AQ_NAMES = { pm2_5: 'PM2.5', pm10: 'PM10', ozone: 'Ozone (O₃)', nitrogen_dioxide: 'NO₂' };
+
+// ─────────────────────────────────────────────
+//  STATE
+// ─────────────────────────────────────────────
+let map;
+let userLat = null, userLon = null;
+let userMarker = null;
+let treeCluster = null;
+let grassLayer = null;
+let windLayer  = null;
+let heatLayer  = null;
+let pollenData = null;
+let aqData     = null;
+let windData   = null;
+let rainData   = null;
+let lastOsmData = null;
+let fetchRadius = 1500;
+let panelOpen = true;
+let prefs = loadPrefs();
+let allergyProfile = loadAllergyProfile();
+
+// ─────────────────────────────────────────────
+//  INIT
+// ─────────────────────────────────────────────
+function initMap() {
+  map = L.map('map', { zoomControl: true, preferCanvas: true }).setView([40, -95], 4);
+
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19,
+  }).addTo(map);
+
+  // Radius slider
+  const slider = document.getElementById('radius-slider');
+  const radVal = document.getElementById('radius-val');
+  slider.addEventListener('input', () => {
+    fetchRadius = +slider.value;
+    radVal.textContent = fetchRadius >= 1000 ? (fetchRadius/1000).toFixed(1)+' km' : fetchRadius+' m';
+  });
+
+  // Apply saved filter states
+  applyFilterPrefs();
+  // Apply saved allergen profile chips
+  applyAllergyProfileChips();
+}
+
+// ─────────────────────────────────────────────
+//  GEOLOCATION
+// ─────────────────────────────────────────────
+function locateUser() {
+  if (!navigator.geolocation) { showToast('Geolocation not supported by your browser.'); return; }
+  showLoading('Finding your location…');
+  navigator.geolocation.getCurrentPosition(onLocation, onLocationError, {
+    enableHighAccuracy: true, timeout: 12000, maximumAge: 60000,
+  });
+}
+
+function onLocation(pos) {
+  goToLocation(pos.coords.latitude, pos.coords.longitude, 15, 'You are here');
+}
+
+async function geocodeLocation(raw) {
+  const query = (raw || '').trim();
+  if (!query) { showToast('Please enter a ZIP, address, or city name.'); return; }
+  showLoading('Looking up "' + query + '"…');
+  try {
+    const isUsZip = /^\d{5}(-\d{4})?$/.test(query);
+    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&addressdetails=1${isUsZip ? '&countrycodes=us' : ''}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Nominatim HTTP ${resp.status}`);
+    const results = await resp.json();
+    if (!results.length) { hideLoading(); showToast('Location not found. Try a different search.'); return; }
+    const addr = results[0].address || {};
+    const placeName = addr.city || addr.town || addr.village || addr.suburb ||
+                      addr.county || addr.state || query;
+    clearZipInputs();
+    document.getElementById('location-name').textContent = placeName;
+    goToLocation(parseFloat(results[0].lat), parseFloat(results[0].lon), 14, placeName);
+  } catch (e) {
+    hideLoading();
+    console.error('geocodeLocation failed:', e);
+    showToast('Error: ' + (e?.message || e), 8000);
+  }
+}
+
+function clearZipInputs() {
+  ['zip-input-prompt', 'zip-input-panel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+}
+
+function goToLocation(lat, lon, zoom, markerLabel) {
+  userLat = lat;
+  userLon = lon;
+  document.getElementById('no-location').style.display = 'none';
+
+  map.setView([lat, lon], zoom);
+
+  if (userMarker) userMarker.remove();
+  userMarker = L.circleMarker([lat, lon], {
+    radius: 9, fillColor: '#3b82f6', color: '#fff', weight: 3, fillOpacity: 1,
+  }).addTo(map).bindTooltip(markerLabel, { permanent: false });
+
+  document.getElementById('fetch-btn').disabled = false;
+  document.getElementById('fetch-btn').textContent = '🔄 Refresh Local Data';
+  document.getElementById('fetch-btn').onclick = fetchAll;
+
+  showLoading('Fetching local data…');
+  fetchAll();
+  reverseGeocode(lat, lon);
+}
+
+function onLocationError(err) {
+  hideLoading();
+  const msgs = {
+    1: 'Location access denied — try entering a ZIP or address instead.',
+    2: 'Could not determine your location — try entering a ZIP or address.',
+    3: 'Location request timed out — try entering a ZIP or address.',
+  };
+  showToast(msgs[err.code] || 'Location unavailable. Enter a ZIP or address to continue.', 6000);
+}
+
+async function reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(`${GEOCODE_URL}?lat=${lat}&lon=${lon}&format=json&zoom=10`);
+    const d = await r.json();
+    const addr = d.address;
+    const name = addr.city || addr.town || addr.village || addr.suburb || addr.county || 'Your area';
+    document.getElementById('location-name').textContent = name;
+  } catch { /* ignore */ }
+}
+
+// ─────────────────────────────────────────────
+//  MASTER FETCH — pollen/AQ and trees run independently
+// ─────────────────────────────────────────────
+async function fetchAll() {
+  if (!userLat) return;
+  showLoading('Loading pollen, wind &amp; air quality…');
+
+  // AQ + Weather in parallel — AQ must succeed, weather is best-effort
+  const [aqResult, windResult] = await Promise.allSettled([
+    fetchAirQuality(userLat, userLon),
+    fetchWeather(userLat, userLon),
+  ]);
+
+  if (aqResult.status === 'rejected') {
+    hideLoading();
+    showToast('Could not load pollen data. Check your connection and try again.');
+    console.error('AQ fetch failed:', aqResult.reason);
+    return;
+  }
+  pollenData = aqResult.value.pollen;
+  aqData     = aqResult.value.airquality;
+
+  if (windResult.status === 'fulfilled') {
+    windData = windResult.value.wind;
+    rainData = windResult.value.rain;
+    try { renderWindCard(); }  catch(e) { console.error('renderWindCard:', e); }
+    try { renderRainCard(); }  catch(e) { console.error('renderRainCard:', e); }
+  } else {
+    console.warn('Weather fetch failed:', windResult.reason);
+  }
+
+  try { renderPollenCards();  } catch(e) { console.error('renderPollenCards:', e); }
+  try { renderHourlyChart();  } catch(e) { console.error('renderHourlyChart:', e); }
+  try { renderForecast();     } catch(e) { console.error('renderForecast:', e); }
+  try { renderAQRows();       } catch(e) { console.error('renderAQRows:', e); }
+
+  // Trees — best-effort; heatmap and wind layer render after trees load
+  const hasCachedTrees = !!getCachedOsm(userLat, userLon, fetchRadius);
+  showLoading(hasCachedTrees ? 'Loading nearby trees…' : 'Loading nearby trees (first load may take 15–30s)…');
+  const slowTreeTimer = !hasCachedTrees && setTimeout(() =>
+    showLoading('Still fetching tree data — Overpass servers can be slow, hang tight…'), 12000);
+  try {
+    const trees = await fetchTrees(userLat, userLon, fetchRadius);
+    clearTimeout(slowTreeTimer);
+    lastOsmData = trees;
+    renderTrees(trees);
+    try { renderHeatmap(); }    catch(e) { console.error('renderHeatmap:', e); }
+  } catch (e) {
+    clearTimeout(slowTreeTimer);
+    showToast('Tree map data unavailable right now — pollen forecast is still shown.', 6000);
+    console.warn('Tree fetch failed:', e);
+  }
+
+  try { renderWindLayer(); } catch(e) { console.error('renderWindLayer:', e); }
+
+  hideLoading();
+}
+
+// ─────────────────────────────────────────────
+//  OVERPASS — TREES & VEGETATION (session-cached + mirror fallback)
+// ─────────────────────────────────────────────
+function osmCacheKey(lat, lon, radius) {
+  return `be_osm_${lat.toFixed(3)}_${lon.toFixed(3)}_${radius}`;
+}
+function getCachedOsm(lat, lon, radius) {
+  try {
+    const raw = sessionStorage.getItem(osmCacheKey(lat, lon, radius));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+function setCachedOsm(lat, lon, radius, data) {
+  try { sessionStorage.setItem(osmCacheKey(lat, lon, radius), JSON.stringify(data)); }
+  catch { /* quota exceeded — skip cache */ }
+}
+
+async function fetchTrees(lat, lon, radius) {
+  const cached = getCachedOsm(lat, lon, radius);
+  if (cached) {
+    console.info(`OSM cache hit (${cached.elements?.length} elements)`);
+    return cached;
+  }
+
+  const query = `
+[out:json][timeout:30];
+(
+  node["natural"="tree"](around:${radius},${lat},${lon});
+  way["landuse"~"^(grass|meadow|farmland)$"](around:${radius},${lat},${lon});
+  way["natural"~"^(grassland|scrub|heath)$"](around:${radius},${lat},${lon});
+);
+out body;
+>;
+out skel qt;
+`.trim();
+
+  let lastErr;
+  for (const mirror of OVERPASS_MIRRORS) {
+    try {
+      const resp = await fetch(mirror, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        signal: AbortSignal.timeout(35000),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      setCachedOsm(lat, lon, radius, data);
+      return data;
+    } catch (e) {
+      console.warn(`Overpass mirror ${mirror} failed:`, e.message);
+      lastErr = e;
+    }
+  }
+  throw lastErr;
+}
+
+// ─────────────────────────────────────────────
+//  OPEN-METEO — POLLEN & AQ
+// ─────────────────────────────────────────────
+async function fetchAirQuality(lat, lon) {
+  const vars = [
+    'alder_pollen','birch_pollen','grass_pollen','mugwort_pollen',
+    'olive_pollen','ragweed_pollen',
+    'pm2_5','pm10','ozone','nitrogen_dioxide',
+  ].join(',');
+  const url = `${OPEN_METEO_AQ}?latitude=${lat}&longitude=${lon}&hourly=${vars}&timezone=auto&forecast_days=7`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('Open-Meteo error ' + resp.status);
+  const data = await resp.json();
+  return parseOpenMeteo(data);
+}
+
+// ─────────────────────────────────────────────
+//  RENDER — TREE MARKERS
+// ─────────────────────────────────────────────
+function renderTrees(osm) {
+  if (treeCluster) { treeCluster.remove(); treeCluster = null; }
+  if (grassLayer)  { grassLayer.remove();  grassLayer  = null; }
+
+  const nodes = {};
+  const ways  = [];
+  osm.elements.forEach(el => {
+    if (el.type === 'node') nodes[el.id] = el;
+    if (el.type === 'way') ways.push(el);
+  });
+
+  // Cluster for trees
+  treeCluster = L.markerClusterGroup({
+    maxClusterRadius: 40,
+    iconCreateFunction: (cluster) => {
+      const count = cluster.getChildCount();
+      const size = count < 10 ? 28 : count < 50 ? 34 : 40;
+      return L.divIcon({
+        html: `<div style="width:${size}px;height:${size}px;border-radius:50%;background:#2f855a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:${size < 34 ? 11 : 13}px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.2)">${count}</div>`,
+        className: '', iconSize: [size, size], iconAnchor: [size/2, size/2],
+      });
+    },
+  });
+
+  const grassFeatures = [];
+
+  // Process ways → grass polygons
+  ways.forEach(way => {
+    const pts = (way.nodes || []).map(id => nodes[id]).filter(Boolean).map(n => [n.lat, n.lon]);
+    if (pts.length < 3) return;
+    const landuse = (way.tags?.landuse || way.tags?.natural || '').toLowerCase();
+    const isWeed = landuse === 'farmland';
+    const category = isWeed ? 'weed' : 'grass';
+    grassFeatures.push({ pts, category, tags: way.tags });
+  });
+
+  grassLayer = L.layerGroup();
+  grassFeatures.forEach(({ pts, category, tags }) => {
+    const grassRisk = pollenData ? pollenRisk(pollenData.grass_pollen, 'grass') : 'low';
+    const weedRisk  = pollenData ? pollenRisk(
+      Math.max(pollenData.mugwort_pollen ?? 0, pollenData.ragweed_pollen ?? 0), 'weed') : 'low';
+    const r = category === 'grass' ? grassRisk : weedRisk;
+    const fillColors = { none:'#9ae6b4', low:'#68d391', medium:'#f6e05e', high:'#f6ad55', vhigh:'#fc8181' };
+    const poly = L.polygon(pts, {
+      color: fillColors[r] || '#9ae6b4', weight: 1,
+      fillColor: fillColors[r] || '#9ae6b4', fillOpacity: 0.3,
+    });
+    const name = tags?.name || (category === 'grass' ? 'Grass / Meadow' : 'Agricultural / Weed Source');
+    poly.bindTooltip(`<strong>${name}</strong><br>Category: ${category === 'grass' ? 'Grass pollen' : 'Weed pollen'}`, {
+      className: 'grass-tooltip', sticky: true,
+    });
+    poly.addTo(grassLayer);
+  });
+
+  // Process tree nodes
+  let treeCount = 0;
+  osm.elements.forEach(el => {
+    if (el.type !== 'node' || !el.tags?.natural) return;
+    if (el.tags.natural !== 'tree') return;
+
+    const info = getTreeInfo(el.tags);
+    const inSeason = info.months.includes(CUR_MONTH);
+    const color = inSeason ? (RISK_COLOR[info.risk] || RISK_COLOR.low) : RISK_COLOR.offseason;
+    const size = 14;
+
+    const icon = L.divIcon({
+      html: `<div class="tree-dot" style="width:${size}px;height:${size}px;background:${color}"></div>`,
+      className: '', iconSize: [size, size], iconAnchor: [size/2, size/2],
+    });
+
+    const marker = L.marker([el.lat, el.lon], { icon });
+
+    // Popup
+    const seasonBar = MONTHS.map((m, i) => {
+      const active = info.months.includes(i+1);
+      const cur = (i+1) === CUR_MONTH;
+      const bg = active ? (cur ? '#f6ad55' : '#68d391') : '#e2e8f0';
+      return `<div class="month-pip" style="background:${bg};width:22px;height:10px;border-radius:3px;font-size:8px;color:#555;display:inline-flex;align-items:center;justify-content:center" title="${m}">${m.slice(0,1)}</div>`;
+    }).join('');
+
+    const riskLabel = inSeason ? RISK_LABEL[info.risk] : 'Off-season';
+    const riskBg = inSeason ? { high:'#fed7d7',medium:'#fefcbf',low:'#c6f6d5',vhigh:'#fbb6ce',none:'#e2e8f0' }[info.risk] : '#ede9fe';
+    const riskColor = inSeason ? { high:'#c53030',medium:'#744210',low:'#276749',vhigh:'#97266d',none:'#718096' }[info.risk] : '#553c9a';
+
+    marker.bindPopup(`
+      <div class="popup-title">${info.name}${el.tags.name ? ' — <em style="font-weight:400;font-size:13px">'+el.tags.name+'</em>' : ''}</div>
+      <div class="popup-row">
+        <span class="key">Species</span>
+        <span>${el.tags['species:en'] || el.tags.species || el.tags.taxon || el.tags.genus || 'Unknown'}</span>
+      </div>
+      <div class="popup-row">
+        <span class="key">Pollen risk</span>
+        <span class="popup-badge" style="background:${riskBg};color:${riskColor}">${riskLabel}</span>
+      </div>
+      <div class="popup-row">
+        <span class="key">Peak season</span>
+        <span>${info.months.map(m => MONTHS[m-1]).join(', ') || 'Unknown'}</span>
+      </div>
+      <div class="popup-season">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Pollination calendar:</div>
+        <div style="display:flex;gap:2px;flex-wrap:wrap">${seasonBar}</div>
+      </div>
+    `, { maxWidth: 260 });
+
+    treeCluster.addLayer(marker);
+    treeCount++;
+  });
+
+  if (prefs.filters.tree)       treeCluster.addTo(map);
+  if (prefs.filters.grass || prefs.filters.weed) grassLayer.addTo(map);
+}
+
+function getTreeInfo(tags) {
+  // Try to find genus from various OSM tags
+  const candidates = [
+    tags.genus, tags.taxon, tags.species, tags['species:en'], tags.name,
+  ].filter(Boolean).map(s => s.toLowerCase().split(/[\s_]/)[0]);
+
+  for (const c of candidates) {
+    for (const [genus, info] of Object.entries(GENUS_MAP)) {
+      if (c === genus || c === info.name.toLowerCase() || c.startsWith(genus.slice(0,5))) {
+        return { ...info };
+      }
+    }
+  }
+  // Check leaf_type / leaf_cycle hints
+  const leaf = (tags.leaf_type || '').toLowerCase();
+  if (leaf === 'needleleaved') return { name:'Conifer', risk:'low', color:'#276749', months:[4,5,6] };
+  return { name:'Tree', risk:'low', color:'#68d391', months:[4,5,6] };
+}
+
+// ─────────────────────────────────────────────
+//  RENDER — POLLEN CARDS
+// ─────────────────────────────────────────────
+function renderPollenCards() {
+  if (!pollenData) return;
+  const grid = document.getElementById('pollen-grid');
+
+  const items = [
+    { key:'birch_pollen',   label:'Birch',    icon:'🌳', type:'tree' },
+    { key:'alder_pollen',   label:'Alder',    icon:'🌲', type:'tree' },
+    { key:'olive_pollen',   label:'Olive',    icon:'🫒', type:'tree' },
+    { key:'grass_pollen',   label:'Grass',    icon:'🌾', type:'grass' },
+    { key:'ragweed_pollen', label:'Ragweed',  icon:'🌿', type:'weed' },
+    { key:'mugwort_pollen', label:'Mugwort',  icon:'🍃', type:'weed' },
+  ];
+
+  grid.innerHTML = items.map(({ key, label, icon, type }) => {
+    const val = pollenData[key];
+    const r   = pollenRisk(val, type);
+    const display = (val !== null && val !== undefined && !isNaN(val)) ? Math.round(val) : '–';
+    let profileClass = '';
+    if (allergyProfile.size > 0) {
+      profileClass = allergyProfile.has(key) ? ' profile-active' : ' profile-inactive';
+    }
+    return `
+      <div class="pollen-card ${RISK_CLASS[r]}${profileClass}">
+        <div class="p-label">${icon} ${label}</div>
+        <div class="p-value">${display}</div>
+        <div class="p-unit">grains/m³</div>
+        <div class="p-level">${RISK_LABEL[r]}</div>
+      </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────
+//  RENDER — 5-DAY FORECAST
+// ─────────────────────────────────────────────
+function renderForecast() {
+  if (!pollenData || !aqData) return;
+  // We stored forecast in parseOpenMeteo but we only returned pollen/aq from fetchAirQuality
+  // Re-fetch is wasteful, so we keep forecast on a module-level var
+  if (!window._forecast) return;
+
+  const strip = document.getElementById('forecast-strip');
+  strip.innerHTML = window._forecast.slice(0, 7).map((day, i) => {
+    const d = day.date;
+    const label = i === 0 ? 'Today' : MONTHS[d.getMonth()]+' '+d.getDate();
+    const g = pollenRisk(day.pollen.grass_pollen, 'grass');
+    const t = pollenRisk(
+      Math.max(day.pollen.birch_pollen ?? 0, day.pollen.alder_pollen ?? 0, day.pollen.olive_pollen ?? 0), 'tree');
+    const w = pollenRisk(
+      Math.max(day.pollen.ragweed_pollen ?? 0, day.pollen.mugwort_pollen ?? 0), 'weed');
+    const pipColor = r => ({ none:'#e2e8f0', low:'#68d391', medium:'#f6e05e', high:'#f6ad55', vhigh:'#fc8181' })[r];
+    return `
+      <div class="fc-day ${i === 0 ? 'fc-today' : ''}">
+        <div class="fc-date">${label}</div>
+        <div class="fc-bar">
+          <div class="fc-pip" style="background:${pipColor(t)}" title="Trees: ${RISK_LABEL[t]}"></div>
+          <div class="fc-pip" style="background:${pipColor(g)}" title="Grass: ${RISK_LABEL[g]}"></div>
+          <div class="fc-pip" style="background:${pipColor(w)}" title="Weeds: ${RISK_LABEL[w]}"></div>
+        </div>
+        <div class="fc-label">🌳🌾🌿</div>
+      </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────
+//  RENDER — AIR QUALITY ROWS
+// ─────────────────────────────────────────────
+function renderAQRows() {
+  if (!aqData) return;
+  const container = document.getElementById('aq-rows');
+  const aqColors = (val, max) => {
+    const pct = Math.min(val / max, 1);
+    if (pct < 0.25) return '#68d391';
+    if (pct < 0.5)  return '#f6e05e';
+    if (pct < 0.75) return '#f6ad55';
+    return '#fc8181';
+  };
+
+  const keys = ['pm2_5','pm10','ozone','nitrogen_dioxide'];
+  container.innerHTML = keys.map(k => {
+    const val = aqData[k];
+    const max = AQ_SCALE[k];
+    if (val === null || val === undefined || isNaN(val)) return '';
+    const pct = Math.min((val / max) * 100, 100).toFixed(1);
+    const color = aqColors(val, max);
+    const unit = k === 'ozone' || k === 'nitrogen_dioxide' ? 'µg/m³' : 'µg/m³';
+    return `
+      <div class="aq-row">
+        <span class="aq-label">${AQ_NAMES[k]}</span>
+        <div class="aq-bar-track">
+          <div class="aq-bar-fill" style="width:${pct}%;background:${color}"></div>
+        </div>
+        <span class="aq-val" style="color:${color}">${Math.round(val)} <span style="font-size:9px;font-weight:400">${unit}</span></span>
+      </div>`;
+  }).filter(Boolean).join('') || '<div class="no-data">No air quality data for this location</div>';
+}
+
+// ─────────────────────────────────────────────
+//  PARSE OPEN-METEO RESPONSE
+// ─────────────────────────────────────────────
+function parseOpenMeteo(data) {
+  const h = data.hourly;
+  const times = h.time.map(t => new Date(t));
+  const now = new Date();
+  const ci = times.findIndex(t => t >= now);
+  const curIdx = ci < 0 ? 0 : Math.max(0, ci - 1);
+
+  const pollenVars = ['alder_pollen','birch_pollen','grass_pollen','mugwort_pollen','olive_pollen','ragweed_pollen'];
+  const aqVars = ['pm2_5','pm10','ozone','nitrogen_dioxide'];
+
+  const pollen = {};
+  pollenVars.forEach(v => { if (h[v]) pollen[v] = h[v][curIdx]; });
+  const airquality = {};
+  aqVars.forEach(v => { if (h[v]) airquality[v] = h[v][curIdx]; });
+
+  const forecast = [];
+  for (let day = 0; day < 7; day++) {
+    const dayStart = day * 24;
+    const dayEnd = dayStart + 24;
+    const dayTimes = times.slice(dayStart, dayEnd);
+    if (!dayTimes.length) break;
+    const dayDate = dayTimes[0];
+    const dayPollen = {};
+    pollenVars.forEach(v => {
+      if (!h[v]) return;
+      const vals = h[v].slice(dayStart, dayEnd).filter(x => x !== null && !isNaN(x));
+      dayPollen[v] = vals.length ? Math.max(...vals) : null;
+    });
+    forecast.push({ date: dayDate, pollen: dayPollen });
+  }
+
+  // Build hourly data for today
+  const todayStr = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-');
+  const hourlyToday = [];
+  h.time.forEach((timeStr, idx) => {
+    if (!timeStr.startsWith(todayStr)) return;
+    const hour = new Date(timeStr).getHours();
+    const hp = {};
+    pollenVars.forEach(v => { if (h[v]) hp[v] = h[v][idx] ?? 0; });
+    hourlyToday.push({ hour, pollen: hp });
+  });
+  window._hourlyToday = hourlyToday;
+
+  window._forecast = forecast;
+  return { pollen, airquality, forecast };
+}
+
+// ─────────────────────────────────────────────
+//  WEATHER DATA (wind + rain)
+// ─────────────────────────────────────────────
+async function fetchWeather(lat, lon) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+    `&current=windspeed_10m,winddirection_10m,windgusts_10m,precipitation,weathercode` +
+    `&hourly=precipitation_probability&wind_speed_unit=mph&timezone=auto&forecast_days=1`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error('Weather API error ' + resp.status);
+  const d = await resp.json();
+
+  const wind = {
+    speed:     d.current.windspeed_10m,
+    direction: d.current.winddirection_10m,  // FROM direction (met convention)
+    gusts:     d.current.windgusts_10m,
+  };
+
+  // Parse rain: find max precipitation_probability for next 6 hours
+  const now = new Date();
+  const sixHoursLater = new Date(now.getTime() + 6 * 3600 * 1000);
+  let maxProbNext6h = 0;
+  if (d.hourly?.time && d.hourly?.precipitation_probability) {
+    d.hourly.time.forEach((timeStr, idx) => {
+      const t = new Date(timeStr);
+      if (t >= now && t <= sixHoursLater) {
+        const prob = d.hourly.precipitation_probability[idx] ?? 0;
+        if (prob > maxProbNext6h) maxProbNext6h = prob;
+      }
+    });
+  }
+
+  const rain = {
+    precipitation:  d.current.precipitation ?? 0,
+    weathercode:    d.current.weathercode ?? 0,
+    maxProbNext6h,
+  };
+
+  return { wind, rain };
+}
+
+function compassPoint(deg) {
+  const pts = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  return pts[Math.round(deg / 22.5) % 16];
+}
+
+function renderWindCard() {
+  if (!windData) return;
+  const sec = document.getElementById('section-wind');
+  const disp = document.getElementById('wind-display');
+  sec.style.display = '';
+  const fromDir = compassPoint(windData.direction);
+  const toDir   = compassPoint((windData.direction + 180) % 360);
+  disp.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+      <div style="text-align:center">
+        <div style="font-size:28px;font-weight:800;color:var(--blue)">${Math.round(windData.speed)}</div>
+        <div style="font-size:11px;color:var(--text-muted)">mph</div>
+      </div>
+      <div>
+        <div style="font-size:13px;font-weight:600">From ${fromDir} → ${toDir}</div>
+        <div style="font-size:12px;color:var(--text-muted)">Gusts up to ${Math.round(windData.gusts)} mph</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Pollen drifting ${toDir}ward</div>
+      </div>
+    </div>`;
+}
+
+function renderRainCard() {
+  const sec  = document.getElementById('section-rain');
+  const disp = document.getElementById('rain-display');
+  if (!rainData) { sec.style.display = 'none'; return; }
+
+  const RAIN_CODES = [51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99];
+  let msg = '';
+
+  if (RAIN_CODES.includes(rainData.weathercode)) {
+    msg = '🌧 Currently raining — pollen is being washed out';
+  } else if (rainData.maxProbNext6h >= 70) {
+    msg = '🌧 Rain likely soon — pollen will drop';
+  } else if (rainData.maxProbNext6h >= 40) {
+    msg = '🌦 Some chance of rain in next 6h';
+  }
+
+  if (!msg) {
+    sec.style.display = 'none';
+    return;
+  }
+
+  sec.style.display = '';
+  disp.textContent = msg;
+}
+
+// ─────────────────────────────────────────────
+//  WIND LAYER (arrow grid on map)
+// ─────────────────────────────────────────────
+function renderWindLayer() {
+  if (windLayer) { windLayer.remove(); windLayer = null; }
+  if (!windData || !userLat) return;
+
+  // Arrow points in the direction wind is blowing TO
+  const arrowDeg = (windData.direction + 180) % 360;
+  const alpha = Math.min(0.4 + windData.speed / 30, 0.9).toFixed(2);
+  const arrowSvg = `
+    <svg width="20" height="20" viewBox="-1 -1 12 22" fill="none"
+         style="transform:rotate(${arrowDeg}deg);display:block">
+      <path d="M5 0 L0 18 L5 13 L10 18 Z"
+            fill="rgba(59,130,246,${alpha})" stroke="white" stroke-width="0.8"/>
+    </svg>`;
+
+  const step = 0.005; // ~550 m per step
+  const range = 3;    // ±3 steps → 7×7 grid
+  windLayer = L.layerGroup();
+
+  for (let di = -range; di <= range; di++) {
+    for (let dj = -range; dj <= range; dj++) {
+      const lat = userLat + di * step;
+      const lon = userLon + dj * step / Math.cos(userLat * Math.PI / 180);
+      const icon = L.divIcon({ html: arrowSvg, className: '', iconSize: [20, 20], iconAnchor: [10, 10] });
+      L.marker([lat, lon], { icon, interactive: false }).addTo(windLayer);
+    }
+  }
+
+  if (prefs.filters.wind) windLayer.addTo(map);
+}
+
+// ─────────────────────────────────────────────
+//  POLLEN HEATMAP (Leaflet.heat)
+// ─────────────────────────────────────────────
+const RISK_HEAT = { none: 0, low: 0.2, medium: 0.5, high: 0.8, vhigh: 1.0 };
+
+function windOffsetPoint(lat, lon) {
+  if (!windData || windData.speed < 3) return [lat, lon];
+  const downRad = ((windData.direction + 180) % 360) * Math.PI / 180;
+  const km = Math.min(windData.speed * 0.015, 0.25); // scale: 0.015 km/mph, max 250 m
+  const dlat = Math.cos(downRad) * km / 111;
+  const dlon = Math.sin(downRad) * km / (111 * Math.cos(lat * Math.PI / 180));
+  return [lat + dlat, lon + dlon];
+}
+
+function renderHeatmap() {
+  if (heatLayer) { heatLayer.remove(); heatLayer = null; }
+  if (!lastOsmData || typeof L.heatLayer !== 'function') return;
+
+  const nodes = {};
+  lastOsmData.elements.forEach(el => { if (el.type === 'node') nodes[el.id] = el; });
+
+  const points = [];
+
+  // Determine which tree genera are relevant given profile
+  const profileActive = allergyProfile.size > 0;
+  const wantTreePollen = !profileActive ||
+    allergyProfile.has('birch_pollen') || allergyProfile.has('alder_pollen') || allergyProfile.has('olive_pollen');
+  const wantGrass = !profileActive || allergyProfile.has('grass_pollen');
+  const wantWeed  = !profileActive || allergyProfile.has('ragweed_pollen') || allergyProfile.has('mugwort_pollen');
+
+  // Trees
+  lastOsmData.elements.forEach(el => {
+    if (el.type !== 'node' || el.tags?.natural !== 'tree') return;
+    if (!wantTreePollen) return;
+    const info = getTreeInfo(el.tags);
+    const inSeason = info.months.includes(CUR_MONTH);
+    const w = (RISK_HEAT[info.risk] || 0.1) * (inSeason ? 1 : 0.08);
+    if (w < 0.01) return;
+    const [lat, lon] = windOffsetPoint(el.lat, el.lon);
+    points.push([lat, lon, w]);
+  });
+
+  // Grass / meadow centroids
+  lastOsmData.elements.forEach(el => {
+    if (el.type !== 'way' || !el.tags) return;
+    const lu = (el.tags.landuse || el.tags.natural || '').toLowerCase();
+    if (!['grass','meadow','farmland','grassland','scrub','heath'].includes(lu)) return;
+    const wayNodes = (el.nodes || []).map(id => nodes[id]).filter(Boolean);
+    if (wayNodes.length < 3) return;
+    const isWeed = lu === 'farmland';
+    if (isWeed && !wantWeed) return;
+    if (!isWeed && !wantGrass) return;
+    const clat = wayNodes.reduce((s, n) => s + n.lat, 0) / wayNodes.length;
+    const clon = wayNodes.reduce((s, n) => s + n.lon, 0) / wayNodes.length;
+    const grassW = pollenData ? RISK_HEAT[pollenRisk(pollenData.grass_pollen, 'grass')] : 0.3;
+    const weedW  = pollenData ? RISK_HEAT[pollenRisk(
+      Math.max(pollenData.mugwort_pollen ?? 0, pollenData.ragweed_pollen ?? 0), 'weed')] : 0.2;
+    const w = (isWeed ? weedW : grassW) * 0.8;
+    if (w < 0.01) return;
+    const [lat, lon] = windOffsetPoint(clat, clon);
+    points.push([lat, lon, w]);
+  });
+
+  if (!points.length) return;
+
+  heatLayer = L.heatLayer(points, {
+    radius: 35,
+    blur: 25,
+    maxZoom: 17,
+    max: 1.0,
+    gradient: { 0.0: 'rgba(104,211,145,0)', 0.3: '#68d391', 0.55: '#f6e05e', 0.78: '#f6ad55', 1.0: '#fc8181' },
+  });
+
+  if (prefs.filters.heatmap) heatLayer.addTo(map);
+}
+
+// ─────────────────────────────────────────────
+//  PERSONAL ALLERGEN PROFILE
+// ─────────────────────────────────────────────
+function loadAllergyProfile() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('breathe-easy-allergens') || 'null');
+    return new Set(Array.isArray(saved) ? saved : []);
+  } catch { return new Set(); }
+}
+
+function saveAllergyProfile() {
+  try { localStorage.setItem('breathe-easy-allergens', JSON.stringify([...allergyProfile])); } catch {}
+}
+
+function applyAllergyProfileChips() {
+  document.querySelectorAll('#allergen-grid .allergen-chip').forEach(chip => {
+    chip.classList.toggle('active', allergyProfile.has(chip.dataset.key));
+  });
+}
+
+function toggleAllergen(key, el) {
+  if (allergyProfile.has(key)) {
+    allergyProfile.delete(key);
+    el.classList.remove('active');
+  } else {
+    allergyProfile.add(key);
+    el.classList.add('active');
+  }
+  saveAllergyProfile();
+  try { renderPollenCards(); } catch(e) { console.error('renderPollenCards:', e); }
+  try { renderHourlyChart(); } catch(e) { console.error('renderHourlyChart:', e); }
+  try { renderHeatmap();     } catch(e) { console.error('renderHeatmap:', e); }
+}
+
+// ─────────────────────────────────────────────
+//  RENDER — HOURLY POLLEN CHART
+// ─────────────────────────────────────────────
+function pollenAggForHour(hourPollen) {
+  const keys = ['alder_pollen','birch_pollen','grass_pollen','mugwort_pollen','olive_pollen','ragweed_pollen'];
+  const active = allergyProfile.size > 0 ? keys.filter(k => allergyProfile.has(k)) : keys;
+  return active.reduce((sum, k) => sum + (hourPollen[k] ?? 0), 0);
+}
+
+function aggToRisk(agg) {
+  if (agg <= 0)   return 'none';
+  if (agg <= 20)  return 'low';
+  if (agg <= 80)  return 'medium';
+  if (agg <= 200) return 'high';
+  return 'vhigh';
+}
+
+function renderHourlyChart() {
+  if (!window._hourlyToday?.length) return;
+  const wrap = document.getElementById('hourly-chart-wrap');
+  const now = new Date();
+  const curHour = now.getHours();
+
+  const hours = window._hourlyToday;
+  const aggs = hours.map(h => pollenAggForHour(h.pollen));
+  const maxAgg = Math.max(...aggs, 1);
+
+  const riskColor = r => ({ none:'#a0aec0', low:'#68d391', medium:'#f6e05e', high:'#f6ad55', vhigh:'#fc8181' })[r];
+
+  const barsHtml = hours.map((h, i) => {
+    const agg = aggs[i];
+    const heightPct = Math.max(3, Math.round((agg / maxAgg) * 56)); // max 56px, min 3px
+    const r = aggToRisk(agg);
+    const isCurrent = h.hour === curHour;
+    const isPast = h.hour < curHour;
+    const classes = ['h-bar'];
+    if (isCurrent) classes.push('current-hour');
+    else if (!isPast) classes.push('future-dim');
+    const labelTxt = h.hour % 6 === 0 ? (h.hour === 0 ? '12a' : h.hour === 12 ? '12p' : h.hour < 12 ? h.hour + 'a' : (h.hour - 12) + 'p') : '';
+    return `<div class="h-bar-col">
+      <div class="${classes.join(' ')}" style="height:${heightPct}px;background:${riskColor(r)}" title="${h.hour}:00 — ${RISK_LABEL[r]}"></div>
+      <div class="h-bar-label">${labelTxt}</div>
+    </div>`;
+  }).join('');
+
+  // Find best 3-consecutive-hour window (lowest aggregate sum)
+  let bestStart = -1, bestSum = Infinity;
+  const HIGH_THRESHOLD = 80;
+  for (let i = 0; i <= hours.length - 3; i++) {
+    const windowSum = aggs[i] + aggs[i + 1] + aggs[i + 2];
+    if (windowSum < bestSum) { bestSum = windowSum; bestStart = i; }
+  }
+
+  const allHigh = aggs.every(a => a > HIGH_THRESHOLD);
+  let bestHtml = '';
+  if (allHigh || bestStart < 0) {
+    bestHtml = '<div class="hourly-best elevated">All day elevated — consider staying indoors</div>';
+  } else {
+    const fmt = h => {
+      if (h === 0) return '12am';
+      if (h === 12) return '12pm';
+      return h < 12 ? h + 'am' : (h - 12) + 'pm';
+    };
+    const startH = hours[bestStart].hour;
+    const endH   = hours[Math.min(bestStart + 3, hours.length - 1)].hour;
+    bestHtml = `<div class="hourly-best">✓ Best window: ${fmt(startH)}–${fmt(endH)}</div>`;
+  }
+
+  wrap.innerHTML = `<div class="hourly-bars">${barsHtml}</div>${bestHtml}`;
+}
+
+// ─────────────────────────────────────────────
+//  FILTERS
+// ─────────────────────────────────────────────
+function toggleFilter(filter, el) {
+  prefs.filters[filter] = !prefs.filters[filter];
+  el.classList.toggle('active', prefs.filters[filter]);
+  savePrefs();
+  applyFilters();
+}
+
+function applyFilters() {
+  if (!map) return;
+
+  const toggleLayer = (layer, show) => {
+    if (!layer) return;
+    if (show  && !map.hasLayer(layer)) layer.addTo(map);
+    if (!show &&  map.hasLayer(layer)) map.removeLayer(layer);
+  };
+
+  toggleLayer(treeCluster, prefs.filters.tree);
+  toggleLayer(grassLayer,  prefs.filters.grass || prefs.filters.weed);
+  toggleLayer(windLayer,   prefs.filters.wind);
+  toggleLayer(heatLayer,   prefs.filters.heatmap);
+}
+
+function applyFilterPrefs() {
+  document.querySelectorAll('.filter-row').forEach(row => {
+    const f = row.dataset.filter;
+    row.classList.toggle('active', !!prefs.filters[f]);
+  });
+}
+
+// ─────────────────────────────────────────────
+//  PANEL
+// ─────────────────────────────────────────────
+function togglePanel() {
+  panelOpen = !panelOpen;
+  document.getElementById('panel').classList.toggle('collapsed', !panelOpen);
+  document.getElementById('panel-toggle').textContent = panelOpen ? '✕' : '☰';
+}
+
+// ─────────────────────────────────────────────
+//  LOADING / TOAST
+// ─────────────────────────────────────────────
+function showLoading(msg) {
+  document.getElementById('loading-msg').innerHTML = msg;
+  document.getElementById('loading').classList.remove('hidden');
+}
+function hideLoading() {
+  document.getElementById('loading').classList.add('hidden');
+}
+function showToast(msg, duration = 4000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), duration);
+}
+
+// ─────────────────────────────────────────────
+//  LOCAL STORAGE PREFS
+// ─────────────────────────────────────────────
+function loadPrefs() {
+  const defaults = { tree: true, grass: true, weed: true, airquality: true, wind: false, heatmap: true };
+  try {
+    const saved = JSON.parse(localStorage.getItem('breathe-easy-prefs') || 'null');
+    return { filters: { ...defaults, ...(saved?.filters || {}) } };
+  } catch { return { filters: defaults }; }
+}
+function savePrefs() {
+  try { localStorage.setItem('breathe-easy-prefs', JSON.stringify(prefs)); } catch {}
+}
+
+// ─────────────────────────────────────────────
+//  START
+// ─────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', initMap);
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+}
+</script>
+</body>
+</html>

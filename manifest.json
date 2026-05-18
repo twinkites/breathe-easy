@@ -1,0 +1,11 @@
+{
+  "name": "Breathe Easy",
+  "short_name": "Breathe Easy",
+  "description": "Hyper-local pollen & air quality map. No tracking.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7f8fa",
+  "theme_color": "#2f855a",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }],
+  "categories": ["health", "weather"]
+}
