@@ -6,7 +6,6 @@ Breathe Easy shows you hyper-local pollen sources and air quality for wherever y
 
 No account, no ads, no tracking.
 
----
 
 ## What it shows you
 
@@ -26,7 +25,6 @@ No account, no ads, no tracking.
 
 **Pollen heatmap** — A color overlay (green → red) that helps you find lower-pollen pockets near you.
 
----
 
 ## How to use it
 
@@ -54,13 +52,11 @@ No account, no ads, no tracking.
 | 🔴 Red    | Very High  | Severe symptoms likely                    |
 | 🟣 Purple | Off-season | Tree exists but not currently pollinating |
 
----
 
 ## Your privacy
 
 Everything stays in your browser. Your location and searches go directly to OpenStreetMap, Open-Meteo, and Nominatim — they never touch any Breathe Easy server, and nothing is stored or tracked on our end. Your allergen profile and map preferences are saved locally on your device only.
 
----
 
 ## Install on your phone
 
@@ -71,7 +67,6 @@ Breathe Easy works as an app on your home screen — no app store required.
 
 Once installed it works offline, showing your last loaded data when you don't have a connection.
 
----
 
 ## A note on accuracy
 
@@ -79,6 +74,5 @@ Pollen data comes from a forecast model, not a physical sensor in your neighborh
 
 **This app is not medical advice.** Do not use it to make decisions about medication or medical treatment. Talk to your doctor or allergist about managing your allergies.
 
----
 
 © Twin Kites LLC
